@@ -30,7 +30,7 @@ public class Student {
     @Column(name = "Gender")
     private String gender;
 
-    // Default Constructor
+    
     public Student() {
         super();
     }
