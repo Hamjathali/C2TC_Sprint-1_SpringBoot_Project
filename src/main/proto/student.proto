@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.tnsif.grpc";
+
+//service
+service StudentService {
+
+  rpc getAllStudents (Empty) returns (StudentList);
+
+  rpc getStudentById (StudentIdRequest) returns (StudentResponse);
+
+  rpc createStudent (StudentRequest) returns (StudentResponse);
+
+  rpc updateStudent (StudentRequest) returns (StudentResponse);
+
+  rpc deleteStudent (StudentIdRequest) returns (Empty);
+}
+
+
+// req mesg
+message Empty {}
+
+
+message StudentIdRequest {
+  int32 id = 1;
+}
+
+// req fro update and insert
+message StudentRequest {
+  int32 s_id = 1;
+  string s_name = 2;
+  string department = 3;
+  string mobileNo = 4;
+  string email = 5;
+  int32 age = 6;
+  string gender = 7;
+}
+
+
+// response
+
+// Single student
+message StudentResponse {
+  int32 s_id = 1;
+  string s_name = 2;
+  string department = 3;
+  string mobileNo = 4;
+  string email = 5;
+  int32 age = 6;
+  string gender = 7;
+}
+
+// Listof students
+message StudentList {
+  repeated StudentResponse students = 1;
+}

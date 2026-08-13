@@ -1,0 +1,41 @@
+type Student {
+    sid: Int
+    s_name: String
+    department: String
+    mobileNo: String
+    email: String
+    age: Int
+    gender: String
+}
+
+type Query {
+
+    students: [Student]
+
+    student(sid: Int!): Student
+}
+
+type Mutation {
+
+    createStudent(
+        sid: Int!
+        s_name: String!
+        department: String!
+        mobileNo: String!
+        email: String!
+        age: Int!
+        gender: String!
+    ): Student
+
+    updateStudent(
+        sid: Int!
+        s_name: String!
+        department: String!
+        mobileNo: String!
+        email: String!
+        age: Int!
+        gender: String!
+    ): Student
+
+    deleteStudent(sid: Int!): String
+}
