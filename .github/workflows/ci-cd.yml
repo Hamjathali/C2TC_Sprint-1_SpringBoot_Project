@@ -31,13 +31,26 @@ jobs:
         run: |
           docker compose up -d db zookeeper kafka kafka2 kafka3 redis
 
+      - name: Wait for PostgreSQL
+        env:
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        run: |
+          echo "Waiting for PostgreSQL..."
+
+          for i in {1..30}; do
+            if docker exec db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+
+            echo "PostgreSQL is not ready yet..."
+            sleep 2
+          done
+
       - name: Check Infrastructure
         run: |
           docker compose ps
-
-      - name: Wait for Infrastructure
-        run: |
-          sleep 20
 
       - name: Make Maven Wrapper Executable
         run: chmod +x mvnw
