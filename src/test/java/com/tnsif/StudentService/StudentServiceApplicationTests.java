@@ -1,4 +1,4 @@
-package com.tnsif.StudentService;
+package com.tnsif.studentservice;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

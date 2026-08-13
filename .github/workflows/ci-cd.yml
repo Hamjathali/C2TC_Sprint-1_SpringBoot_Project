@@ -27,15 +27,39 @@ jobs:
           java-version: '17'
           cache: maven
 
+      - name: Start Infrastructure
+        run: |
+          docker compose up -d db zookeeper kafka kafka2 kafka3 redis
+
+      - name: Check Infrastructure
+        run: |
+          docker compose ps
+
+      - name: Wait for Infrastructure
+        run: |
+          sleep 20
+
       - name: Make Maven Wrapper Executable
         run: chmod +x mvnw
 
-      - name: Build and Test
+      - name: Run Maven Tests
+        env:
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          DB_HOST: localhost
+          DB_PORT: 5433
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092,localhost:9093,localhost:9094
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
         run: ./mvnw clean test
 
       - name: Build JAR
-        run: ./mvnw clean package -DskipTests
+        run: ./mvnw package -DskipTests
 
+      - name: Stop Infrastructure
+        if: always()
+        run: docker compose down
 
   docker:
     name: Build and Push Docker Image
