@@ -12,14 +12,30 @@ on:
   workflow_dispatch:
 
 jobs:
+
+  # =========================================================
+  # CI - Build and Test
+  # =========================================================
   build-test:
     name: Build and Test
     runs-on: ubuntu-latest
 
+    env:
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+
     steps:
+
+      # -----------------------------------------------------
+      # Checkout source code
+      # -----------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # -----------------------------------------------------
+      # Setup Java 17
+      # -----------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -27,40 +43,223 @@ jobs:
           java-version: '17'
           cache: maven
 
+      # -----------------------------------------------------
+      # Start required infrastructure
+      # -----------------------------------------------------
       - name: Start Infrastructure
         run: |
           docker compose up -d db zookeeper kafka kafka2 kafka3 redis
 
+      # -----------------------------------------------------
+      # Show running containers
+      # -----------------------------------------------------
+      - name: Check Infrastructure
+        run: |
+          docker compose ps
+
+      # -----------------------------------------------------
+      # Wait for PostgreSQL
+      # -----------------------------------------------------
       - name: Wait for PostgreSQL
-        env:
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
         run: |
           echo "Waiting for PostgreSQL..."
 
           for i in {1..30}; do
-            if docker exec db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"; then
+
+            if docker compose exec -T db \
+              pg_isready \
+              -U "$POSTGRES_USER" \
+              -d "$POSTGRES_DB"; then
+
               echo "PostgreSQL is ready!"
               break
             fi
 
             echo "PostgreSQL is not ready yet..."
             sleep 2
+
           done
 
-      - name: Check Infrastructure
+      # -----------------------------------------------------
+      # Verify PostgreSQL is actually ready
+      # -----------------------------------------------------
+      - name: Verify PostgreSQL
         run: |
-          docker compose ps
+          docker compose exec -T db \
+            pg_isready \
+            -U "$POSTGRES_USER" \
+            -d "$POSTGRES_DB"
 
+      # -----------------------------------------------------
+      # Maven wrapper permission
+      # -----------------------------------------------------
       - name: Make Maven Wrapper Executable
         run: chmod +x mvnw
 
-      
+      # -----------------------------------------------------
+      # Run tests
+      #
+      # IMPORTANT:
+      # Maven runs on GitHub runner.
+      # PostgreSQL is inside Docker.
+      #
+      # Therefore:
+      # PostgreSQL -> localhost:5433
+      # Kafka       -> localhost:9092
+      # Redis       -> localhost:6379
+      # -----------------------------------------------------
+      - name: Run Maven Tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5433
 
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092,localhost:9093,localhost:9094
+
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
+        run: |
+          ./mvnw clean test
+
+      # -----------------------------------------------------
+      # Build JAR after tests pass
+      # -----------------------------------------------------
       - name: Build JAR
-        run: ./mvnw package -DskipTests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5433
 
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092,localhost:9093,localhost:9094
+
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
+        run: |
+          ./mvnw package -DskipTests
+
+      # -----------------------------------------------------
+      # Show generated JAR
+      # -----------------------------------------------------
+      - name: Verify JAR
+        run: |
+          ls -lh target/
+
+      # -----------------------------------------------------
+      # Stop infrastructure
+      # Always execute even if test fails
+      # -----------------------------------------------------
       - name: Stop Infrastructure
         if: always()
-        run: docker compose down
+        run: |
+          docker compose down
 
+
+  # =========================================================
+  # CD - Build and Push Docker Image
+  # =========================================================
+  docker:
+    name: Build and Push Docker Image
+
+    runs-on: ubuntu-latest
+
+    # Run CD only if CI succeeds
+    needs: build-test
+
+    steps:
+
+      # -----------------------------------------------------
+      # Checkout source code
+      # -----------------------------------------------------
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------
+      # Setup Java 17
+      #
+      # build-test and docker are separate jobs.
+      # Therefore target/*.jar from CI job is NOT available here.
+      # We need to build the JAR again.
+      # -----------------------------------------------------
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # -----------------------------------------------------
+      # Maven wrapper permission
+      # -----------------------------------------------------
+      - name: Make Maven Wrapper Executable
+        run: chmod +x mvnw
+
+      # -----------------------------------------------------
+      # Build JAR for Docker image
+      # -----------------------------------------------------
+      - name: Build JAR
+        env:
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
+        run: |
+          ./mvnw package -DskipTests
+
+      # -----------------------------------------------------
+      # Verify JAR exists
+      # -----------------------------------------------------
+      - name: Verify JAR
+        run: |
+          ls -lh target/
+
+      # -----------------------------------------------------
+      # Validate Docker username
+      # Prevent:
+      # invalid tag "/student-service:latest"
+      # -----------------------------------------------------
+      - name: Validate Docker Username
+        run: |
+          if [ -z "${{ secrets.DOCKER_USERNAME }}" ]; then
+            echo "ERROR: DOCKER_USERNAME secret is empty or missing."
+            exit 1
+          fi
+
+          echo "Docker username is configured."
+
+      # -----------------------------------------------------
+      # Login to Docker Hub
+      # -----------------------------------------------------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # -----------------------------------------------------
+      # Build and Push Docker Image
+      # -----------------------------------------------------
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/student-service:latest
+
+      # -----------------------------------------------------
+      # Deployment successful
+      # -----------------------------------------------------
+      - name: Deployment Status
+        run: |
+          echo "======================================"
+          echo "Docker image pushed successfully!"
+          echo "Image: ${{ secrets.DOCKER_USERNAME }}/student-service:latest"
+          echo "======================================"
